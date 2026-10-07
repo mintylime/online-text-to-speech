@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF & Text Reader</title>
+  <!-- Load PDF.js for client-side PDF text extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    textarea { width: 100%; height: 200px; margin: 10px 0; padding: 8px; box-sizing: border-box; }
+    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    button, input, select { padding: 8px 12px; cursor: pointer; }
+    label { font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+  <h2>PDF & Text-to-Speech Reader</h2>
+
+  <label for="pdfInput"><strong>Upload PDF:</strong></label><br>
+  <input type="file" id="pdfInput" accept="application/pdf"><br><br>
+
+  <label for="textInput"><strong>Or Paste Text Below:</strong></label>
+  <textarea id="textInput" placeholder="Paste text here or select a PDF above..."></textarea>
+
+  <div class="controls">
+    <button id="playBtn">▶ Play</button>
+    <button id="pauseBtn">⏸ Pause / Resume</button>
+    <button id="stopBtn">⏹ Stop</button>
+
+    <label for="voiceSelect">Voice:</label>
+    <select id="voiceSelect"></select>
+
+    <label for="rate">Speed:</label>
+    <input type="range" id="rate" min="0.5" max="2" value="1" step="0.1">
+  </div>
+
+  <script>
+    // Configure PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const textInput = document.getElementById('textInput');
+    const pdfInput = document.getElementById('pdfInput');
+    const playBtn = document.getElementById('playBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const voiceSelect = document.getElementById('voiceSelect');
+    const rateInput = document.getElementById('rate');
+
+    const synth = window.speechSynthesis;
+    let voices = [];
+    let currentUtterance = null; // Global variable prevents Chrome garbage collection
+    let isPaused = false;        // Custom flag bypasses Chrome's buggy synth.paused state
+
+    // Populate voice dropdown
+    function populateVoices() {
+      voices = synth.getVoices();
+      voiceSelect.innerHTML = '';
+      voices.forEach((voice, index) => {
+        const option = document.createElement('option');
+        option.textContent = `${voice.name} (${voice.lang})`;
+        option.setAttribute('data-index', index);
+        voiceSelect.appendChild(option);
+      });
+    }
+
+    populateVoices();
+    if (speechSynthesis.onvoiceschanged !== undefined) {
+      speechSynthesis.onvoiceschanged = populateVoices;
+    }
+
+    // Read and parse uploaded PDF file
+    pdfInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      textInput.value = 'Extracting text from PDF...';
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+        let extractedText = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          const pageText = content.items.map(item => item.str).join(' ');
+          extractedText += pageText + '\n\n';
+        }
+        textInput.value = extractedText.trim();
+      } catch (error) {
+        textInput.value = 'Error reading PDF file: ' + error.message;
+      }
+    });
+
+    // Play / Resume Button
+    playBtn.addEventListener('click', () => {
+      // If currently paused, resume where left off
+      if (synth.speaking && isPaused) {
+        synth.resume();
+        isPaused = false;
+        return;
+      }
+
+      // If already playing, ignore extra clicks
+      if (synth.speaking && !isPaused) {
+        return;
+      }
+
+      // Otherwise, start fresh from the beginning
+      synth.cancel();
+      isPaused = false;
+
+      const text = textInput.value.trim();
+      if (!text) return;
+
+      currentUtterance = new SpeechSynthesisUtterance(text);
+
+      const selectedIndex = voiceSelect.selectedOptions[0]?.getAttribute('data-index');
+      if (selectedIndex !== null && voices[selectedIndex]) {
+        currentUtterance.voice = voices[selectedIndex];
+      }
+      currentUtterance.rate = parseFloat(rateInput.value);
+
+      currentUtterance.onend = () => { isPaused = false; };
+      currentUtterance.onerror = () => { isPaused = false; };
+
+      synth.speak(currentUtterance);
+    });
+
+    // Pause / Resume Toggle Button
+    pauseBtn.addEventListener('click', () => {
+      if (!synth.speaking) return;
+
+      if (isPaused) {
+        synth.resume();
+        isPaused = false;
+      } else {
+        synth.pause();
+        isPaused = true;
+      }
+    });
+
+    // Stop Button
+    stopBtn.addEventListener('click', () => {
+      synth.cancel();
+      isPaused = false;
+    });
+  </script>
+
+</body>
+</html>
